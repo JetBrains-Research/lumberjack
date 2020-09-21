@@ -98,7 +98,7 @@ class TreeBPE(
                 upToken
             }
             else -> {
-                "$upToken | $bottomToken"
+                "${upToken}_$bottomToken"
             }
         }
         val mergedNode = SimpleNode(edgeType, upNode.getParent(), mergedToken)
