@@ -15,7 +15,7 @@ import java.io.File
 class Parser : CliktCommand() {
 
     private val directory: String by option(help = "Root directory with java files for parsing").required()
-    private val numMerges: Int by option(help = "Number of merges to perform").int().default(1000)
+    private val numMerges: Int by option(help = "Number of merges to perform").int().default(100)
 
     private fun parseFiles() = GumTreeJavaParser().parseWithExtension(File(directory), "java")
 
@@ -56,7 +56,14 @@ class Parser : CliktCommand() {
         return present
     }
 
+    private fun canMerge(node: Node) = node.getTypeLabel() != "Block"
+
+    private fun canMerge(edge: Edge) = canMerge(edge.bottomNode) && canMerge(edge.upNode)
+
     private fun addEdge(edge: Edge) {
+        if (!canMerge(edge)) {
+            return
+        }
         val edgeType = edge.getType()
         val edgesList = edgesByType.getOrPut(edgeType) { mutableListOf() }
         edgesList.add(edge)
@@ -66,6 +73,9 @@ class Parser : CliktCommand() {
     }
 
     private fun removeEdge(edge: Edge) {
+        if (!canMerge(edge)) {
+            return
+        }
         val edgeType = edge.getType()
         edgeTypeCounts[edgeType] = edgeTypeCounts.getOrDefault(edgeType, 0) - 1
     }
@@ -159,6 +169,8 @@ class Parser : CliktCommand() {
         return true
     }
 
+    private fun getTreeSize(root: Node): Int = 1 + root.getChildren().map { getTreeSize(it) }.sum()
+
     override fun run() {
         val parsedFiles = parseFiles()
         println("Parsed ${parsedFiles.size} files")
@@ -167,6 +179,10 @@ class Parser : CliktCommand() {
         collectEdges(roots)
 
         allRoots.addAll(roots)
+
+        val rootsWithSizes = allRoots.map { root ->
+            Pair(root.getMetadata("filePath") as String, getTreeSize(root))
+        }.toMap()
 
         repeat(numMerges) { iter ->
             val maxEntry = edgeTypeCounts.maxBy { (_, count) -> count }
@@ -194,6 +210,12 @@ class Parser : CliktCommand() {
             it.prettyPrint(indentSymbol = "|   ")
             println("-------------------------------")
         }
+
+        println(allRoots.map {
+            val size = getTreeSize(it)
+            val path = it.getMetadata("filePath") as String
+            (rootsWithSizes[path] as Int).toFloat() / size
+        }.sum() / allRoots.size)
     }
 }
 
