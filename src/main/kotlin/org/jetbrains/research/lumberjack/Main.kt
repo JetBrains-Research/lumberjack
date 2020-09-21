@@ -1,6 +1,8 @@
 package org.jetbrains.research.lumberjack
 
 import astminer.common.model.Node
+import astminer.common.model.ParseResult
+import astminer.parse.antlr.SimpleNode
 import astminer.parse.java.GumTreeJavaParser
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.options.default
@@ -15,6 +17,26 @@ class Parser : CliktCommand() {
     private val numMerges: Int by option(help = "Number of merges to perform").int().default(100)
 
     private fun parseFiles() = GumTreeJavaParser().parseWithExtension(File(directory), "java")
+
+    private fun printCompressedTrees(compressedTrees: List<ParseResult<SimpleNode>>) {
+        compressedTrees.take(100).forEach { (root, filePath) ->
+            println("-------------------------------")
+            println("path to file: ${filePath}")
+            root?.prettyPrint(indentSymbol = "|   ")
+            println("-------------------------------")
+        }
+    }
+
+    private fun printCompressionInfo(
+            compressedTrees: List<ParseResult<SimpleNode>>,
+            filesToSizes: Map<String, Int>
+    ) {
+        println(compressedTrees.map { (root, filePath) ->
+            val size = getTreeSize(root)
+            (filesToSizes[filePath] as Int).toFloat() / size
+        }.sum() / compressedTrees.size)
+    }
+
 
     override fun run() {
         println("Parsing files")
@@ -32,17 +54,8 @@ class Parser : CliktCommand() {
         val compressedTrees = treeBPE.transform(roots)
         println("Compressed trees")
 
-        compressedTrees.take(100).forEach { (root, filePath) ->
-            println("-------------------------------")
-            println("path to file: ${filePath}")
-            root?.prettyPrint(indentSymbol = "|   ")
-            println("-------------------------------")
-        }
-
-        println(compressedTrees.map { (root, filePath) ->
-            val size = getTreeSize(root)
-            (filesToSizes[filePath] as Int).toFloat() / size
-        }.sum() / compressedTrees.size)
+        printCompressedTrees(compressedTrees)
+        printCompressionInfo(compressedTrees, filesToSizes)
     }
 }
 
