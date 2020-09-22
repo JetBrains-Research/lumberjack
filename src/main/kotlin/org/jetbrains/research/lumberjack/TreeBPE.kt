@@ -16,12 +16,20 @@ class TreeBPE(
 
     private val edgesByType = mutableMapOf<String, MutableList<Edge>>()
     private val edgeTypeCounts = mutableMapOf<String, Int>()
+    private val mergingSequence = mutableListOf<String>()
+
     private val allRoots = mutableSetOf<SimpleNode>()
 
-    private fun clearState() {
+    private fun prepareFitAndTransform(roots: List<SimpleNode>) {
+        prepareTransform(roots)
+        mergingSequence.clear()
+    }
+
+    private fun prepareTransform(roots: List<SimpleNode>) {
         edgesByType.clear()
         edgeTypeCounts.clear()
         allRoots.clear()
+        allRoots.addAll(roots)
     }
 
     private fun checkTypePresence(node: Node, childType: String): Boolean {
@@ -149,13 +157,24 @@ class TreeBPE(
         return true
     }
 
-    fun transform(roots: List<SimpleNode>): List<ParseResult<SimpleNode>> {
-        println("Running TreeBPE with $numMerges merges")
+    private fun mergeEdgeType(edgeType: String): Int {
+        val edges = edgesByType[edgeType] ?: mutableListOf()
+        var countMerges = 0
+        edges.forEach {
+            if (merge(it, edgeType)) {
+                countMerges += 1
+            }
+        }
+        edgeTypeCounts.remove(edgeType)
+        edgesByType.remove(edgeType)
+        return countMerges
+    }
 
-        clearState()
+    fun fitAndTransform(roots: List<SimpleNode>): List<ParseResult<SimpleNode>> {
+        println("Fitting TreeBPE with $numMerges merges")
 
+        prepareFitAndTransform(roots)
         collectEdges(roots)
-        allRoots.addAll(roots)
 
         repeat(numMerges) { iter ->
             val maxEntry = edgeTypeCounts.maxBy { (_, count) -> count }
@@ -165,18 +184,26 @@ class TreeBPE(
             }
             val (edgeType, count) = maxEntry
             println("Iteration $iter: merging $edgeType with count $count")
-            val edges = edgesByType[edgeType] ?: mutableListOf()
-            var countMerges = 0
-            edges.forEach {
-                if (merge(it, edgeType)) {
-                    countMerges += 1
-                }
-            }
-            edgeTypeCounts.remove(edgeType)
-            edgesByType.remove(edgeType)
+            mergingSequence.add(edgeType)
+            val countMerges = mergeEdgeType(edgeType)
             println("Actually merged $countMerges")
         }
+        return allRoots.map { node ->
+            ParseResult(node, node.getMetadata(FILE_PATH_FIELD) as String)
+        }
+    }
 
+    fun transform(roots: List<SimpleNode>): List<ParseResult<SimpleNode>> {
+        println("Transforming TreeBPE with $numMerges merges")
+
+        prepareTransform(roots)
+        collectEdges(roots)
+
+        mergingSequence.forEachIndexed { iter, edgeType ->
+            println("Iteration $iter of ${mergingSequence.size}: merging $edgeType")
+            val countMerges = mergeEdgeType(edgeType)
+            println("Merged $countMerges edges")
+        }
         return allRoots.map { node ->
             ParseResult(node, node.getMetadata(FILE_PATH_FIELD) as String)
         }

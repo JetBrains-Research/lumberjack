@@ -111,7 +111,7 @@ class Parser : CliktCommand() {
         println("Transformed the nodes")
 
         val treeBPE = TreeBPE(numMerges, nodeFilters = listOf { node: Node -> node.getTypeLabel() != "Block" })
-        val compressedTrees = treeBPE.transform(roots)
+        val compressedTrees = treeBPE.fitAndTransform(roots)
         println("Compressed trees")
 
         printCompressedTrees(compressedTrees)
