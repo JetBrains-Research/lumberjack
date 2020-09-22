@@ -1,12 +1,12 @@
 package org.jetbrains.research.lumberjack
 
-import astminer.cli.FilePathExtractor
+import astminer.cli.LabeledParseResult
 import astminer.cli.MethodNameExtractor
 import astminer.cli.normalizeParseResult
-import astminer.common.getNormalizedToken
+import astminer.cli.processNodeToken
+import astminer.common.*
 import astminer.common.model.LabeledPathContexts
 import astminer.common.model.Node
-import astminer.common.model.ParseResult
 import astminer.parse.antlr.SimpleNode
 import astminer.parse.java.GumTreeJavaParser
 import astminer.paths.Code2VecPathStorage
@@ -24,75 +24,71 @@ import java.io.File
 class Parser : CliktCommand() {
 
     private val inputDirectory: String by option(
-            "--input",
-            help = "Root directory with java files for parsing"
+        "--input",
+        help = "Root directory with java files for parsing"
     ).required()
 
     private val outputDirectory: String by option(
-            "--output",
-            help = "Path to directory where the output will be stored"
+        "--output",
+        help = "Path to directory where the output will be stored"
     ).required()
 
     private val numMerges: Int by option(help = "Number of merges to perform").int().default(100)
 
     private val maxPathHeight: Int by option(
-            "--maxH",
-            help = "Maximum height of path for code2vec"
+        "--maxH",
+        help = "Maximum height of path for code2vec"
     ).int().default(8)
 
     private val maxPathWidth: Int by option(
-            "--maxW",
-            help = "Maximum width of path. " +
-                    "Note, that here width is the difference between token indices in contrast to the original code2vec."
+        "--maxW",
+        help = "Maximum width of path. " +
+                "Note, that here width is the difference between token indices in contrast to the original code2vec."
     ).int().default(3)
 
     private val maxPathContexts: Int by option(
-            "--maxContexts",
-            help = "Number of path contexts to keep from each method."
+        "--maxContexts",
+        help = "Number of path contexts to keep from each method."
     ).int().default(500)
 
     private val splitTokens: Boolean by option(
-            "--split-tokens",
-            help = "if passed, split tokens into sequence of tokens"
+        "--split-tokens",
+        help = "if passed, split tokens into sequence of tokens"
     ).flag(default = false)
 
     private fun parseFiles() = GumTreeJavaParser().parseWithExtension(File(inputDirectory), "java")
 
-    private fun printCompressedTrees(compressedTrees: List<ParseResult<SimpleNode>>) {
-        compressedTrees.take(100).forEach { (root, filePath) ->
+    private fun printCompressedTrees(compressedTrees: List<LabeledParseResult<SimpleNode>>) {
+        compressedTrees.take(100).forEach { (root, label) ->
             println("-------------------------------")
-            println("path to file: ${filePath}")
-            root?.prettyPrint(indentSymbol = "|   ")
+            println("path to file: $label")
+            root.prettyPrint(indentSymbol = "|   ")
             println("-------------------------------")
         }
     }
 
     private fun printCompressionInfo(
-            compressedTrees: List<ParseResult<SimpleNode>>,
-            filesToSizes: Map<String, Int>
+        compressedTrees: List<LabeledParseResult<SimpleNode>>,
+        filesToSizes: Map<String, Int>
     ) {
-        println(compressedTrees.map { (root, filePath) ->
+        println(compressedTrees.map { (root, label) ->
             val size = getTreeSize(root)
-            (filesToSizes[filePath] as Int).toFloat() / size
+            (filesToSizes[label] as Int).toFloat() / size
         }.sum() / compressedTrees.size)
     }
 
-    private fun extractCode2VecData(compressedTrees: List<ParseResult<SimpleNode>>) {
+    private fun extractCode2VecData(compressedTrees: List<LabeledParseResult<SimpleNode>>) {
         val miner = PathMiner(PathRetrievalSettings(maxPathHeight, maxPathWidth))
         val storage = Code2VecPathStorage(outputDirectory)
-        compressedTrees.forEach { normalizeParseResult(it, splitTokens) }
 
-        val labelExtractor = FilePathExtractor()
-        compressedTrees.forEach { parseResult ->
-            val labeledParseResults = labelExtractor.toLabeledData(parseResult)
-            labeledParseResults.forEach { (root, label) ->
-                val paths = miner.retrievePaths(root).take(maxPathContexts)
-                storage.store(LabeledPathContexts(label, paths.map {
-                    toPathContext(it) { node ->
-                        node.getNormalizedToken()
-                    }
-                }))
-            }
+        compressedTrees.forEach { (root, label) ->
+            root.preOrder().forEach { node -> processNodeToken(node, splitTokens) }
+            val paths = miner.retrievePaths(root).take(maxPathContexts)
+            storage.store(LabeledPathContexts(label, paths.map {
+                toPathContext(it) { node ->
+                    node.getNormalizedToken()
+                }
+            }))
         }
 
         storage.close()
@@ -101,21 +97,30 @@ class Parser : CliktCommand() {
     override fun run() {
         println("Parsing files")
         val parsedFiles = parseFiles()
-        val filesToSizes = parsedFiles.map { (root, filePath) ->
-            Pair(filePath, getTreeSize(root))
-        }.toMap()
+        parsedFiles.forEach { normalizeParseResult(it, splitTokens) }
         println("Parsed ${parsedFiles.size} files")
+        println("Splitting into labeled methods")
+        val labelExtractor = MethodNameExtractor(hideMethodNames = true)
+        val labeledMethods = parsedFiles.flatMap {
+            labelExtractor.toLabeledData(it).map { (root, label) ->
+                LabeledParseResult(root, splitToSubtokens(label).joinToString("|"))
+            }
+        }
+        println("Parsed ${labeledMethods.size} methods")
 
         println("Transforming trees to SimpleNodes")
-        val roots = toSimpleTrees(parsedFiles)
-        println("Transformed the nodes")
+        val roots = toSimpleTrees(labeledMethods)
+        println("Transformed the trees")
 
         val treeBPE = TreeBPE(numMerges, nodeFilters = listOf { node: Node -> node.getTypeLabel() != "Block" })
         val compressedTrees = treeBPE.fitAndTransform(roots)
         println("Compressed trees")
 
+        println("Moving tokens to leaves")
+        compressedTrees.forEach { moveTokensToLeaves(it.root) }
+        println("Moved tokens to leaves")
+
         printCompressedTrees(compressedTrees)
-        printCompressionInfo(compressedTrees, filesToSizes)
 
         extractCode2VecData(compressedTrees)
     }

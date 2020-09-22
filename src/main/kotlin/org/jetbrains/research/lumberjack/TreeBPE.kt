@@ -1,5 +1,7 @@
 package org.jetbrains.research.lumberjack
 
+import astminer.cli.LabeledParseResult
+import astminer.common.model.LabeledPathContexts
 import astminer.common.model.Node
 import astminer.common.model.ParseResult
 import astminer.parse.antlr.SimpleNode
@@ -147,7 +149,7 @@ class TreeBPE(
             parent.setChildren(updatedParentChildren)
         } else {
             allRoots.remove(upNode)
-            mergedNode.setMetadata(FILE_PATH_FIELD, upNode.getMetadata(FILE_PATH_FIELD) as String)
+            mergedNode.setMetadata(LABEL_FIELD, upNode.getMetadata(LABEL_FIELD) as String)
             allRoots.add(mergedNode)
         }
 
@@ -170,7 +172,7 @@ class TreeBPE(
         return countMerges
     }
 
-    fun fitAndTransform(roots: List<SimpleNode>): List<ParseResult<SimpleNode>> {
+    fun fitAndTransform(roots: List<SimpleNode>): List<LabeledParseResult<SimpleNode>> {
         println("Fitting TreeBPE with $numMerges merges")
 
         prepareFitAndTransform(roots)
@@ -189,11 +191,11 @@ class TreeBPE(
             println("Actually merged $countMerges")
         }
         return allRoots.map { node ->
-            ParseResult(node, node.getMetadata(FILE_PATH_FIELD) as String)
+            LabeledParseResult(node, node.getMetadata(LABEL_FIELD) as String)
         }
     }
 
-    fun transform(roots: List<SimpleNode>): List<ParseResult<SimpleNode>> {
+    fun transform(roots: List<SimpleNode>): List<LabeledParseResult<SimpleNode>> {
         println("Transforming TreeBPE with $numMerges merges")
 
         prepareTransform(roots)
@@ -205,7 +207,7 @@ class TreeBPE(
             println("Merged $countMerges edges")
         }
         return allRoots.map { node ->
-            ParseResult(node, node.getMetadata(FILE_PATH_FIELD) as String)
+            LabeledParseResult(node, node.getMetadata(LABEL_FIELD) as String)
         }
     }
 }
