@@ -6,9 +6,11 @@ class LightNode(
         var parent: LightNode?,
         val children: MutableList<LightNode> = mutableListOf(),
         var canMerge: Boolean = true,
-        var marked: Boolean = false,
         var hasMerged: Boolean = false
 ) {
+    var tokenIdList: MutableList<Long> = mutableListOf()
+    var typeId: Long = -1
+
     fun addChild(node: LightNode) {
         children.add(node)
         node.parent = this

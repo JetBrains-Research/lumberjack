@@ -2,10 +2,7 @@ package org.jetbrains.research.lumberjack
 
 import astminer.common.model.Node
 
-data class Edge(val upNode: LightNode, val bottomNode: LightNode) {
-    fun getType() = "${this.upNode.nodeType} (${this.bottomNode.nodeType})"
-    fun canMerge() = upNode.canMerge && bottomNode.canMerge
-}
+data class Edge(val upNode: LightNode, val bottomNode: LightNode)
 
 fun getTreeSize(root: Node?): Int = root?.let { 1 + root.getChildren().map { getTreeSize(it) }.sum() } ?: 0
 
