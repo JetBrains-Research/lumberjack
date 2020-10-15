@@ -1,9 +1,6 @@
 package org.jetbrains.research.lumberjack
 
-import astminer.cli.LabeledParseResult
-import astminer.common.getNormalizedToken
 import astminer.common.model.Node
-import astminer.parse.antlr.SimpleNode
 
 data class Edge(val upNode: LightNode, val bottomNode: LightNode) {
     fun getType() = "${this.upNode.nodeType} (${this.bottomNode.nodeType})"
@@ -12,29 +9,26 @@ data class Edge(val upNode: LightNode, val bottomNode: LightNode) {
 
 fun getTreeSize(root: Node?): Int = root?.let { 1 + root.getChildren().map { getTreeSize(it) }.sum() } ?: 0
 
-const val LABEL_FIELD = "label"
 const val TOKEN_NODE_TYPE = "TOKEN_NODE"
+const val DELIMITER = '^'
 
-fun toSimpleTree(root: Node): SimpleNode {
-    val simpleRoot = SimpleNode(root.getTypeLabel(), null, root.getNormalizedToken().replace('|', '_'))
-    val simpleChildren = root.getChildren().map { toSimpleTree(it) }
-    simpleRoot.setChildren(simpleChildren)
-    return simpleRoot
-}
-
-fun toSimpleTrees(roots: List<LabeledParseResult<out Node>>): List<SimpleNode> = roots.map { (root, label) ->
-    root.let {
-        val transformedRoot = toSimpleTree(root)
-        transformedRoot.setMetadata(LABEL_FIELD, label)
-        transformedRoot
+fun nodeToLightNode(root: Node, parent: LightNode? = null): LightNode? {
+    if (root.getTypeLabel() == "Javadoc") {
+        return null
     }
+    val node = LightNode(root.getToken(), root.getTypeLabel(), parent)
+    node.children.addAll(root.getChildren().mapNotNull { nodeToLightNode(it, node) })
+    if (node.nodeType == "Block") {
+        node.canMerge = false
+    }
+    return node
 }
 
-fun moveTokensToLeaves(root: SimpleNode) {
-    root.getChildren().forEach { moveTokensToLeaves(it as SimpleNode) }
-    if (root.getToken().isNotEmpty()) {
-        val newChild = SimpleNode(TOKEN_NODE_TYPE, root, root.getToken())
-        root.setChildren(listOf(newChild) + root.getChildren())
+fun moveTokensToLeaves(root: LightNode) {
+    root.children.forEach { moveTokensToLeaves(it) }
+    if (root.token.isNotEmpty()) {
+        val newChild = LightNode(root.token, TOKEN_NODE_TYPE, root)
+        root.addChild(newChild)
     }
 }
 
