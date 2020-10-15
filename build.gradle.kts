@@ -17,6 +17,7 @@ repositories {
 
 dependencies {
     implementation(kotlin("stdlib"))
-    implementation("io.github.vovak.astminer", "astminer-dev", "1.328")
+    implementation("io.github.vovak.astminer", "astminer", "0.6")
     implementation("com.github.ajalt.clikt", "clikt", "3.0.1")
+    implementation("com.google.code.gson", "gson", "2.8.6")
 }

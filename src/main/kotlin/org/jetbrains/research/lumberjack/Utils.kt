@@ -3,11 +3,11 @@ package org.jetbrains.research.lumberjack
 import astminer.cli.LabeledParseResult
 import astminer.common.getNormalizedToken
 import astminer.common.model.Node
-import astminer.common.model.ParseResult
 import astminer.parse.antlr.SimpleNode
 
-data class Edge(val upNode: Node, val bottomNode: Node) {
-    fun getType() = "${this.upNode.getTypeLabel()} (${this.bottomNode.getTypeLabel()})"
+data class Edge(val upNode: LightNode, val bottomNode: LightNode) {
+    fun getType() = "${this.upNode.nodeType} (${this.bottomNode.nodeType})"
+    fun canMerge() = upNode.canMerge && bottomNode.canMerge
 }
 
 fun getTreeSize(root: Node?): Int = root?.let { 1 + root.getChildren().map { getTreeSize(it) }.sum() } ?: 0

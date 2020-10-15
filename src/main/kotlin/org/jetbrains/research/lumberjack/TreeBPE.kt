@@ -1,105 +1,93 @@
 package org.jetbrains.research.lumberjack
 
-import astminer.cli.LabeledParseResult
-import astminer.common.model.LabeledPathContexts
-import astminer.common.model.Node
-import astminer.common.model.ParseResult
-import astminer.parse.antlr.SimpleNode
-
-class TreeBPE(
-        private val numMerges: Int,
-        private val nodeFilters: List<(Node) -> Boolean> = emptyList(),
-        private val edgeFilters: List<(Edge) -> Boolean> = emptyList()
-) {
-    companion object {
-        private const val ACTIVE_FIELD = "active"
-        private const val TYPES_FIELD = "types"
-    }
+class TreeBPE<Label>(private val numMerges: Int) {
 
     private val edgesByType = mutableMapOf<String, MutableList<Edge>>()
     private val edgeTypeCounts = mutableMapOf<String, Int>()
     private val mergingSequence = mutableListOf<String>()
 
-    private val allRoots = mutableSetOf<SimpleNode>()
+    private val allRoots = mutableSetOf<LightNode>()
+    private val rootLabels = mutableMapOf<LightNode, Label?>()
 
-    private fun prepareFitAndTransform(roots: List<SimpleNode>) {
-        prepareTransform(roots)
+    private fun prepareFitAndTransform(roots: List<LightNode>, labels: List<Label?>) {
+        prepareTransform(roots, labels)
         mergingSequence.clear()
     }
 
-    private fun prepareTransform(roots: List<SimpleNode>) {
+    private fun prepareTransform(roots: List<LightNode>, labels: List<Label?>) {
         edgesByType.clear()
         edgeTypeCounts.clear()
         allRoots.clear()
         allRoots.addAll(roots)
-    }
-
-    private fun checkTypePresence(node: Node, childType: String): Boolean {
-        val typeSet = node.getMetadata(TYPES_FIELD) as MutableSet<String>?
-        val present = typeSet != null && typeSet.contains(childType)
-        val actualTypeSet = typeSet ?: mutableSetOf()
-        actualTypeSet.add(childType)
-        if (typeSet == null) {
-            node.setMetadata(TYPES_FIELD, actualTypeSet)
+        rootLabels.clear()
+        roots.zip(labels).forEach { (root, label) ->
+            rootLabels[root] = label
         }
-        return present
     }
 
-    private fun canMerge(node: Node) = nodeFilters.all { it(node) }
+    private fun anyMarked(node: LightNode, childType: String) = node.children.any {
+        it.nodeType == childType && it.marked
+    }
 
-    private fun canMerge(edge: Edge) =
-            canMerge(edge.bottomNode) && canMerge(edge.upNode) && edgeFilters.all { it(edge) }
+    private fun markChildren(node: LightNode, childType: String) = node.children.forEach {
+        if (it.nodeType == childType) {
+            it.marked = true
+        }
+    }
+
+    private fun unmarkChildren(node: LightNode) {
+        node.children.forEach {
+            it.marked = false
+        }
+    }
 
     private fun addEdge(edge: Edge) {
-        if (!canMerge(edge)) {
+        if (!edge.canMerge()) {
             return
         }
         val edgeType = edge.getType()
         val edgesList = edgesByType.getOrPut(edgeType) { mutableListOf() }
         edgesList.add(edge)
-        if (!checkTypePresence(edge.upNode, edge.bottomNode.getTypeLabel())) {
+        if (!anyMarked(edge.upNode, edge.bottomNode.nodeType)) {
+            markChildren(edge.upNode, edge.bottomNode.nodeType)
             edgeTypeCounts[edgeType] = edgeTypeCounts.getOrDefault(edgeType, 0) + 1
+        } else {
+            edge.bottomNode.marked = true
         }
     }
 
     private fun removeEdge(edge: Edge) {
-        if (!canMerge(edge)) {
+        if (!edge.canMerge()) {
             return
         }
         val edgeType = edge.getType()
         edgeTypeCounts[edgeType] = edgeTypeCounts.getOrDefault(edgeType, 0) - 1
     }
 
-    private fun collectEdges(root: Node) {
-        root.setMetadata(ACTIVE_FIELD, true)
-        root.getChildren().forEach {
+    private fun collectEdges(root: LightNode) {
+        root.children.forEach {
             addEdge(Edge(root, it))
             collectEdges(it)
         }
     }
 
-    private fun collectEdges(roots: List<Node>) {
+    private fun collectEdges(roots: List<LightNode>) {
         roots.forEach {
             collectEdges(it)
         }
     }
 
-    private fun checkActive(node: Node): Boolean {
-        val active = node.getMetadata(ACTIVE_FIELD) as Boolean?
-        return active != null && active
-    }
-
-    private fun prepareMergedNode(edge: Edge, edgeType: String): SimpleNode? {
+    private fun prepareMergedNode(edge: Edge, edgeType: String): LightNode? {
         val (upNode, bottomNode) = edge
 
-        if (!checkActive(upNode) || !checkActive(bottomNode)) {
+        if (upNode.hasMerged || bottomNode.hasMerged) {
             return null
         }
-        upNode.setMetadata(ACTIVE_FIELD, false)
-        bottomNode.setMetadata(ACTIVE_FIELD, false)
+        upNode.hasMerged = true
+        bottomNode.hasMerged = true
 
-        val upToken = upNode.getToken()
-        val bottomToken = bottomNode.getToken()
+        val upToken = upNode.token
+        val bottomToken = bottomNode.token
         val mergedToken = when {
             upToken.isEmpty() -> {
                 bottomToken
@@ -111,34 +99,33 @@ class TreeBPE(
                 "${upToken}_$bottomToken"
             }
         }
-        val mergedNode = SimpleNode(edgeType, upNode.getParent(), mergedToken)
-        val mergedChildren = mutableListOf<Node>()
-        upNode.getChildren().forEach { upChild ->
+        val mergedNode = LightNode(mergedToken, edgeType, upNode.parent, canMerge = true)
+        upNode.children.forEach { upChild ->
             removeEdge(Edge(upNode, upChild))
             if (upChild == bottomNode) {
-                mergedChildren.addAll(bottomNode.getChildren())
-                bottomNode.getChildren().forEach { bottomChild ->
+                mergedNode.addChildren(bottomNode.children)
+                bottomNode.children.forEach { bottomChild ->
                     removeEdge(Edge(bottomNode, bottomChild))
+                    bottomChild.marked = false
                 }
             } else {
-                mergedChildren.add(upChild)
+                mergedNode.addChild(upChild)
+                upChild.marked = false
             }
         }
-        mergedNode.setChildren(mergedChildren)
-        mergedNode.setMetadata(ACTIVE_FIELD, true)
         return mergedNode
     }
 
     private fun merge(edge: Edge, edgeType: String): Boolean {
         val mergedNode = prepareMergedNode(edge, edgeType) ?: return false
 
-        val (upNode, _) = edge
-        val parent = upNode.getParent() as SimpleNode?
+        val (upNode, bottomNode) = edge
+        val parent = upNode.parent
 
         if (parent != null) {
             removeEdge(Edge(parent, upNode))
             addEdge(Edge(parent, mergedNode))
-            val children = parent.getChildren()
+            val children = parent.children
             val updatedParentChildren = children.map {
                 if (it == upNode) {
                     mergedNode
@@ -146,14 +133,15 @@ class TreeBPE(
                     it
                 }
             }.toList()
-            parent.setChildren(updatedParentChildren)
+            parent.children.clear()
+            parent.addChildren(updatedParentChildren)
         } else {
-            allRoots.remove(upNode)
-            mergedNode.setMetadata(LABEL_FIELD, upNode.getMetadata(LABEL_FIELD) as String)
             allRoots.add(mergedNode)
+            rootLabels[mergedNode] = rootLabels[upNode]
+            allRoots.remove(upNode)
+            rootLabels.remove(upNode)
         }
-
-        mergedNode.getChildren().forEach {
+        mergedNode.children.forEach {
             addEdge(Edge(mergedNode, it))
         }
         return true
@@ -172,10 +160,10 @@ class TreeBPE(
         return countMerges
     }
 
-    fun fitAndTransform(roots: List<SimpleNode>): List<LabeledParseResult<SimpleNode>> {
+    fun fitAndTransform(roots: List<LightNode>, labels: List<Label?> = emptyList()): List<Pair<LightNode, Label?>> {
         println("Fitting TreeBPE with $numMerges merges")
 
-        prepareFitAndTransform(roots)
+        prepareFitAndTransform(roots, labels)
         collectEdges(roots)
 
         repeat(numMerges) { iter ->
@@ -191,14 +179,14 @@ class TreeBPE(
             println("Actually merged $countMerges")
         }
         return allRoots.map { node ->
-            LabeledParseResult(node, node.getMetadata(LABEL_FIELD) as String)
+            Pair(node, rootLabels[node])
         }
     }
 
-    fun transform(roots: List<SimpleNode>): List<LabeledParseResult<SimpleNode>> {
+    fun transform(roots: List<LightNode>, labels: List<Label?> = emptyList()): List<Pair<LightNode, Label?>> {
         println("Transforming TreeBPE with $numMerges merges")
 
-        prepareTransform(roots)
+        prepareTransform(roots, labels)
         collectEdges(roots)
 
         mergingSequence.forEachIndexed { iter, edgeType ->
@@ -207,7 +195,7 @@ class TreeBPE(
             println("Merged $countMerges edges")
         }
         return allRoots.map { node ->
-            LabeledParseResult(node, node.getMetadata(LABEL_FIELD) as String)
+            Pair(node, rootLabels[node])
         }
     }
 }
